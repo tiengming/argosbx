@@ -1,0 +1,62 @@
+name: GitOps Auto-Sync Upstream
+
+on:
+  schedule:
+    # 每天 UTC 时间凌晨 3 点自动运行探测
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # 保留手动触发按钮
+
+jobs:
+  sync-base-image:
+    runs-on: ubuntu-latest
+    name: "Sync and Rewrite Dockerfile"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch upstream Digest from Docker Hub
+        id: fetch_digest
+        run: |
+          echo "Fetching latest tag metadata for ygkkk/argosbx..."
+          
+          # 使用 curl 获取 Docker Hub API，并屏蔽非正常输出
+          RESPONSE=$(curl -sL "https://hub.docker.com/v2/repositories/ygkkk/argosbx/tags/latest")
+          
+          # 防御性编程：校验上游 API 是否正常返回了有效的 JSON 格式数据
+          if echo "$RESPONSE" | grep -q '"digest"'; then
+            # 使用 jq 提取精准的 digest 哈希值
+            DIGEST=$(echo "$RESPONSE" | jq -r '.digest')
+            echo "Upstream latest digest is: $DIGEST"
+          else
+            echo "Error: Failed to fetch digest from Docker Hub. API might be rate-limited or format changed."
+            exit 1
+          fi
+          
+          # 提取本地 Dockerfile 中的当前哈希值
+          LOCAL_DIGEST=$(grep -oP 'sha256:[a-f0-9]+' Dockerfile || echo "none")
+          echo "Local digest in repository is: $LOCAL_DIGEST"
+          
+          # 注册为 Actions 环境变量供后续判断
+          echo "upstream=$DIGEST" >> $GITHUB_OUTPUT
+          echo "local=$LOCAL_DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Mutate Dockerfile and Commit
+        # 核心逻辑门：仅当上游哈希与本地不同，且抓取到的哈希不是空值时，才执行重写与推送
+        if: steps.fetch_digest.outputs.upstream != steps.fetch_digest.outputs.local && steps.fetch_digest.outputs.upstream != 'null'
+        run: |
+          echo "Hash mismatch detected! Initiating Dockerfile mutation..."
+          
+          # 使用 sed 正则表达式，精准替换旧哈希为新哈希
+          sed -i -E "s/sha256:[a-f0-9]+/${{ steps.fetch_digest.outputs.upstream }}/" Dockerfile
+          
+          echo "==== Validating mutated Dockerfile ===="
+          cat Dockerfile
+          echo "======================================="
+          
+          # 执行 Git 签入机制，向仓库发起 Commit 以唤醒 Northflank
+          git config --global user.name "GitOps Bot"
+          git config --global user.email "bot@gitops.local"
+          git add Dockerfile
+          git commit -m "chore: auto-upgrade base image to ${{ steps.fetch_digest.outputs.upstream }}"
+          git push
