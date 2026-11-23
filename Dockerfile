@@ -1,5 +1,5 @@
 # 动态锚点：由 GitHub Actions 自动更新并锁定基础镜像的绝对 SHA256 哈希值
-FROM ygkkk/argosbx@sha256:c386db48645a521c00bc22d0a1c1004484291c13392da791b47baa3c23ad26de
+FROM ygkkk/argosbx@sha256:1ab7ee6ef437cdd09116c1de3f9c25fea9d361bebf8f7c22aeb6ec64c5ba44f3
 
 # 保持无交互构建
 ENV DEBIAN_FRONTEND=noninteractive
